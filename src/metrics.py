@@ -28,7 +28,7 @@ def prepare_etf_history(history: pd.DataFrame) -> pd.DataFrame:
 
 def premium_statistics(history: pd.DataFrame, code: str) -> dict[str, float]:
     series = history.loc[history["code"] == code, "premium"].dropna()
-    if series.empty:
+    if len(series) < 2:
         return {key: np.nan for key in ("current", "percentile", "mean", "std", "plus_1", "plus_2", "minus_1", "minus_2")}
 
     current = series.iloc[-1]

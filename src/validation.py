@@ -39,7 +39,8 @@ def validate_workbook_frames(frames: Mapping[str, pd.DataFrame]) -> ValidationRe
     if errors:
         raise WorkbookValidationError("\n".join(errors))
 
-    for sheet, frame in frames.items():
+    for sheet in SCHEMA:
+        frame = frames[sheet]
         parsed_dates = pd.to_datetime(frame["date"], errors="coerce")
         if parsed_dates.isna().any():
             errors.append(f"Sheet {sheet} 的 date 含无法识别的日期。")
