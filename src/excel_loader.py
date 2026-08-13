@@ -13,6 +13,29 @@ from src.metrics import prepare_etf_current, prepare_etf_history
 from src.validation import ValidationResult, validate_workbook_frames
 
 
+def _parse_premium_history(raw: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFrame:
+    """Parse the production workbook's __BLOCK__-separated history layout."""
+    rows: list[dict[str, object]] = []
+    code: str | None = None
+    for values in raw.itertuples(index=False, name=None):
+        first = values[0] if len(values) > 0 else None
+        if isinstance(first, str) and first.startswith("__BLOCK__:"):
+            code = first.split(":", 1)[1].split("|", 1)[0]
+            continue
+        if code is None or len(values) < 3:
+            continue
+        date, close, nav = values[0], values[1], values[2]
+        if pd.notna(date) and pd.notna(close) and pd.notna(nav):
+            rows.append({"date": date, "code": code, "close": close, "nav": nav, "premium": pd.NA})
+    if rows:
+        return pd.DataFrame(rows)
+    # Until Wind has saved both historical close and NAV, retain a one-point
+    # series so other pages can still show the current snapshot safely.
+    history = fallback[["date", "code", "close", "nav"]].copy()
+    history["premium"] = fallback["close"] / fallback["nav"] - 1
+    return history
+
+
 def _adapt_wind_workbook(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     """Map the production Wind workbook's saved values to the app schema.
 
@@ -36,11 +59,7 @@ def _adapt_wind_workbook(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFr
     ].copy()
     global_index["pct_change"] = pd.to_numeric(global_index["pct_change"], errors="coerce") / 100
 
-    # This particular workbook's PremiumHistory only has a complete price
-    # series at present, so its close/NAV history is not yet usable. A current
-    # point preserves detail-page availability until the full history is saved.
-    history = current[["date", "code", "close", "nav"]].copy()
-    history["premium"] = current["close"] / current["nav"] - 1
+    history = _parse_premium_history(frames.get("PremiumHistory", pd.DataFrame()), current)
     return {"ETF_Current": current, "ETF_History": history, "Global_Index": global_index}
 
 
@@ -54,6 +73,7 @@ def _read_workbook(source: str | Path | bytes | BinaryIO) -> dict[str, pd.DataFr
         return pd.read_excel(workbook, sheet_name=list(SCHEMA))
     if {"WindData", "GlobalIndices"}.issubset(workbook.sheet_names):
         production = pd.read_excel(workbook, sheet_name=["WindData", "GlobalIndices", "StrategyAnalysis"], header=3)
+        production["PremiumHistory"] = pd.read_excel(workbook, sheet_name="PremiumHistory", header=None)
         production["WindData"] = production["WindData"].dropna(subset=["code", "close", "nav"])
         production["GlobalIndices"] = production["GlobalIndices"].dropna(subset=["code"])
         adapted = _adapt_wind_workbook(production)
